@@ -22,18 +22,19 @@
         button { padding: 18px; font-size: 26px; border: none; border-radius: 15px; cursor: pointer; background: #3498db; color: white; font-weight: bold; transition: 0.2s; box-shadow: 0 5px #2980b9; }
         button:hover { background: #2980b9; transform: translateY(-2px); }
         button:active { transform: translateY(2px); box-shadow: none; }
-        
         #score-board { color: #27ae60; font-size: 20px; font-weight: bold; margin-bottom: 10px; }
-        
+
         /* 排行榜樣式 */
-        #leaderboard { margin-top: 20px; padding: 15px; background: #f1f2f6; border-radius: 15px; text-align: left; }
-        .rank-item { display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 5px 0; font-size: 14px; }
+        #rank-container { margin-top: 20px; padding: 10px; background: #f1f2f6; border-radius: 15px; font-size: 14px; text-align: left; }
+        .rank-title { text-align: center; font-weight: bold; margin-bottom: 5px; color: #1a2a6c; }
+        .rank-item { display: flex; justify-content: space-between; border-bottom: 1px solid #ccc; padding: 3px 0; }
+        .rank-item:last-child { border: none; }
     </style>
 </head>
 <body>
 
 <div id="game-container">
-    <div id="score-board">👮 當前破案數：<span id="score">0</span></div>
+    <div id="score-board">👮 警探破案數：<span id="score">0</span> 條</div>
     <div id="timer-wrap"><div id="timer-bar"></div></div>
     
     <div class="character-row">
@@ -47,9 +48,9 @@
     <div class="math-display" id="question">--</div>
     <div id="options-area" class="btn-grid"></div>
 
-    <div id="leaderboard">
-        <div style="font-weight: bold; margin-bottom: 10px; text-align: center;">🏆 ZPD 榮譽排行榜 (Top 5)</div>
-        <div id="rank-list"></div>
+    <div id="rank-container">
+        <div class="rank-title">🏆 ZPD 榮譽排行榜 (Top 3)</div>
+        <div id="rank-list">載入紀錄中...</div>
     </div>
 </div>
 
@@ -62,11 +63,11 @@
         'Flash': { box: 'flash-box', win: '......好......快......啊......', lose: '......再......算......一......次......' }
     };
 
-    // 1. 保留原本穩定的抓取函式
+    // 1. 完全保留你的抓取函式 (原封不動)
     async function loadCharByName(name, elementId, fallbackName) {
         const box = document.getElementById(elementId);
         try {
-            const res = await fetch(`https://api.disneyapi.dev{encodeURIComponent(name)}`);
+            const res = await fetch(`https://api.disneyapi.dev/character?name=${encodeURIComponent(name)}`);
             const json = await res.json();
             const dataList = Array.isArray(json.data) ? json.data : [json.data];
             if (dataList && dataList.length > 0) {
@@ -78,7 +79,7 @@
         } catch (e) { box.innerText = fallbackName; }
     }
 
-    // 2. 遊戲核心邏輯
+    // 2. 遊戲出題與逻辑
     function generateGame() {
         const names = Object.keys(charConfigs);
         const activeName = names[Math.floor(Math.random() * names.length)];
@@ -87,14 +88,28 @@
         document.getElementById(charConfigs[activeName].box).classList.add('active');
         document.getElementById('speech-bubble').innerText = `${activeName}：請作答！`;
 
-        const a = Math.floor(Math.random() * 20) + 10;
-        const b = Math.floor(Math.random() * 15) + 5;
-        const c = Math.floor(Math.random() * 8) + 1;
+        // 生成三個數字
+        let a = Math.floor(Math.random() * 20) + 10;
+        let b = Math.floor(Math.random() * 15) + 5;
+        let c = Math.floor(Math.random() * 8) + 1;
+        
         const isPlus = Math.random() > 0.5;
-        document.getElementById('question').innerText = isPlus ? `${a} + ${b} - ${c}` : `${a} - ${b} + ${c}`;
-        currentAns = isPlus ? (a + b - c) : (a - b + c);
 
-        const choices = [currentAns, currentAns + 3, currentAns - 2, currentAns + 5].sort(() => Math.random() - 0.5);
+        // --- 修正處：防止負數邏輯 ---
+        if (isPlus) {
+            // A + B - C 模式：確保 (A + B) 總和比 C 大
+            if ((a + b) < c) { [a, c] = [c, a]; } 
+            document.getElementById('question').innerText = `${a} + ${b} - ${c}`;
+            currentAns = a + b - c;
+        } else {
+            // A - B + C 模式：確保 A 比 B 大
+            if (a < b) { [a, b] = [b, a]; } 
+            document.getElementById('question').innerText = `${a} - ${b} + ${c}`;
+            currentAns = a - b + c;
+        }
+        // -----------------------
+
+        const choices = [currentAns, currentAns + 3, currentAns + 1, currentAns + 5].sort(() => Math.random() - 0.5);
         const container = document.getElementById('options-area');
         container.innerHTML = '';
         choices.forEach(val => {
@@ -106,12 +121,14 @@
         startTimer();
     }
 
+
     function check(val, charName) {
         if(val === currentAns) {
             score += 1; // 每一條(題) 1 分
             document.getElementById('score').innerText = score;
             document.getElementById('speech-bubble').innerText = charConfigs[charName].win;
             clearInterval(timer);
+            if(score % 50 === 0) celebrate();
             setTimeout(generateGame, 800);
         } else {
             document.getElementById('speech-bubble').innerText = charConfigs[charName].lose;
@@ -132,28 +149,38 @@
         }, 100);
     }
 
-    // 3. 排行榜邏輯
+    // 3. 排行榜儲存與顯示
     function endGame() {
-        document.getElementById('speech-bubble').innerText = "❌ 時間到！任務結束。";
+        document.getElementById('speech-bubble').innerText = "時間到！任務結束。";
         document.getElementById('options-area').innerHTML = '<button onclick="location.reload()" style="grid-column: span 2">重新挑戰</button>';
+        
         saveScore(score);
         displayRank();
     }
 
-    function saveScore(newScore) {
+    function saveScore(s) {
         let history = JSON.parse(localStorage.getItem('zootopiaRank')) || [];
-        history.push({ score: newScore, date: new Date().toLocaleDateString() });
-        history.sort((a, b) => b.score - a.score);
-        history = history.slice(0, 5); // 只留前五名
-        localStorage.setItem('zootopiaRank', JSON.stringify(history));
+        history.push({val: s, time: new Date().toLocaleDateString()});
+        history.sort((a, b) => b.val - a.val);
+        localStorage.setItem('zootopiaRank', JSON.stringify(history.slice(0, 3)));
     }
 
     function displayRank() {
         const history = JSON.parse(localStorage.getItem('zootopiaRank')) || [];
-        const listDiv = document.getElementById('rank-list');
-        listDiv.innerHTML = history.map((item, index) => 
-            `<div class="rank-item"><span>No.${index+1}</span> <span>${item.score} 條</span> <span>${item.date}</span></div>`
-        ).join('') || '<div style="text-align:center">尚無紀錄</div>';
+        const list = document.getElementById('rank-list');
+        if(history.length === 0) {
+            list.innerText = "尚無破案紀錄";
+            return;
+        }
+        list.innerHTML = history.map((item, i) => 
+            `<div class="rank-item"><span>No.${i+1}</span> <span>${item.val} 條</span> <span>${item.time}</span></div>`
+        ).join('');
+    }
+
+    function celebrate() {
+        const bubble = document.getElementById('speech-bubble');
+        bubble.innerText = "🎊 恭喜！你獲得了警局表揚勳章！ 🎊";
+        bubble.style.color = "#d35400";
     }
 
     async function init() {
@@ -164,7 +191,7 @@
             loadCharByName('Chief Bogo', 'bogo-box', 'Bogo'),
             loadCharByName('Flash', 'flash-box', 'Flash')
         ]);
-        document.getElementById('speech-bubble').innerText = "警局連線成功！";
+        document.getElementById('speech-bubble').innerText = "警局連線成功，準備出擊！";
         generateGame();
     }
 
