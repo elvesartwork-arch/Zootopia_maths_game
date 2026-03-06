@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>Zootopia 數學警局：排行榜版</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #1a2a6c; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; overflow: hidden; }
+        #game-container { background: white; padding: 30px; border-radius: 25px; box-shadow: 0 15px 50px rgba(0,0,0,0.5); width: 420px; text-align: center; position: relative; z-index: 10; }
+        
+        .character-row { display: flex; justify-content: center; gap: 15px; margin-bottom: 20px; }
+        .char-box { width: 75px; height: 75px; border-radius: 50%; background: #eee; border: 4px solid #ddd; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 12px; transition: 0.3s; opacity: 0.4; }
+        .char-box.active { opacity: 1; transform: scale(1.2); border-color: #f1c40f; box-shadow: 0 0 15px rgba(241, 196, 15, 0.8); }
+
+        #timer-wrap { width: 100%; height: 10px; background: #eee; border-radius: 5px; margin: 15px 0; overflow: hidden; }
+        #timer-bar { width: 100%; height: 100%; background: #e74c3c; width: 100%; transition: width 0.1s linear; }
+
+        #speech-bubble { background: #f8f9fa; border: 2px solid #3498db; border-radius: 15px; padding: 12px; margin-bottom: 15px; min-height: 45px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #2c3e50; position: relative; }
+        #speech-bubble::after { content: ''; position: absolute; top: -10px; left: 50%; border-width: 0 10px 10px; border-style: solid; border-color: #3498db transparent; margin-left: -10px; }
+
+        .math-display { font-size: 46px; font-weight: 900; color: #2c3e50; margin-bottom: 20px; background: #edf2f7; padding: 15px; border-radius: 15px; }
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        button { padding: 18px; font-size: 26px; border: none; border-radius: 15px; cursor: pointer; background: #3498db; color: white; font-weight: bold; transition: 0.2s; box-shadow: 0 5px #2980b9; }
+        button:hover { background: #2980b9; transform: translateY(-2px); }
+        button:active { transform: translateY(2px); box-shadow: none; }
+        
+        #score-board { color: #27ae60; font-size: 20px; font-weight: bold; margin-bottom: 10px; }
+        
+        /* 排行榜樣式 */
+        #leaderboard { margin-top: 20px; padding: 15px; background: #f1f2f6; border-radius: 15px; text-align: left; }
+        .rank-item { display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 5px 0; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="score-board">👮 當前破案數：<span id="score">0</span></div>
+    <div id="timer-wrap"><div id="timer-bar"></div></div>
+    
+    <div class="character-row">
+        <div id="judy-box" class="char-box">Judy</div>
+        <div id="nick-box" class="char-box">Nick</div>
+        <div id="bogo-box" class="char-box">Bogo</div>
+        <div id="flash-box" class="char-box">Flash</div>
+    </div>
+
+    <div id="speech-bubble">連線至 ZPD 指揮中心...</div>
+    <div class="math-display" id="question">--</div>
+    <div id="options-area" class="btn-grid"></div>
+
+    <div id="leaderboard">
+        <div style="font-weight: bold; margin-bottom: 10px; text-align: center;">🏆 ZPD 榮譽排行榜 (Top 5)</div>
+        <div id="rank-list"></div>
+    </div>
+</div>
+
+<script>
+    let currentAns = 0, score = 0, timeLeft = 10, timer = null;
+    const charConfigs = {
+        'Judy Hopps': { box: 'judy-box', win: '太棒了！精準運算！', lose: '別氣餒，再來一次！' },
+        'Nick Wilde': { box: 'nick-box', win: '挺聰明的嘛，要合夥嗎？', lose: '哎呀，這題難倒你了？' },
+        'Chief Bogo': { box: 'bogo-box', win: '做得好，警員。繼續保持！', lose: '別浪費我的時間，專心點！' },
+        'Flash': { box: 'flash-box', win: '......好......快......啊......', lose: '......再......算......一......次......' }
+    };
+
+    // 1. 保留原本穩定的抓取函式
+    async function loadCharByName(name, elementId, fallbackName) {
+        const box = document.getElementById(elementId);
+        try {
+            const res = await fetch(`https://api.disneyapi.dev{encodeURIComponent(name)}`);
+            const json = await res.json();
+            const dataList = Array.isArray(json.data) ? json.data : [json.data];
+            if (dataList && dataList.length > 0) {
+                const imgUrl = dataList[0].imageUrl;
+                if (imgUrl) {
+                    box.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerText='${fallbackName}'">`;
+                } else { box.innerText = fallbackName; }
+            } else { box.innerText = fallbackName; }
+        } catch (e) { box.innerText = fallbackName; }
+    }
+
+    // 2. 遊戲核心邏輯
+    function generateGame() {
+        const names = Object.keys(charConfigs);
+        const activeName = names[Math.floor(Math.random() * names.length)];
+        
+        names.forEach(n => document.getElementById(charConfigs[n].box).classList.remove('active'));
+        document.getElementById(charConfigs[activeName].box).classList.add('active');
+        document.getElementById('speech-bubble').innerText = `${activeName}：請作答！`;
+
+        const a = Math.floor(Math.random() * 20) + 10;
+        const b = Math.floor(Math.random() * 15) + 5;
+        const c = Math.floor(Math.random() * 8) + 1;
+        const isPlus = Math.random() > 0.5;
+        document.getElementById('question').innerText = isPlus ? `${a} + ${b} - ${c}` : `${a} - ${b} + ${c}`;
+        currentAns = isPlus ? (a + b - c) : (a - b + c);
+
+        const choices = [currentAns, currentAns + 3, currentAns - 2, currentAns + 5].sort(() => Math.random() - 0.5);
+        const container = document.getElementById('options-area');
+        container.innerHTML = '';
+        choices.forEach(val => {
+            const btn = document.createElement('button');
+            btn.innerText = val;
+            btn.onclick = () => check(val, activeName);
+            container.appendChild(btn);
+        });
+        startTimer();
+    }
+
+    function check(val, charName) {
+        if(val === currentAns) {
+            score += 1; // 每一條(題) 1 分
+            document.getElementById('score').innerText = score;
+            document.getElementById('speech-bubble').innerText = charConfigs[charName].win;
+            clearInterval(timer);
+            setTimeout(generateGame, 800);
+        } else {
+            document.getElementById('speech-bubble').innerText = charConfigs[charName].lose;
+            timeLeft -= 2; 
+        }
+    }
+
+    function startTimer() {
+        clearInterval(timer);
+        timeLeft = 10;
+        timer = setInterval(() => {
+            timeLeft -= 0.1;
+            document.getElementById('timer-bar').style.width = (timeLeft * 10) + "%";
+            if (timeLeft <= 0) {
+                clearInterval(timer);
+                endGame();
+            }
+        }, 100);
+    }
+
+    // 3. 排行榜邏輯
+    function endGame() {
+        document.getElementById('speech-bubble').innerText = "❌ 時間到！任務結束。";
+        document.getElementById('options-area').innerHTML = '<button onclick="location.reload()" style="grid-column: span 2">重新挑戰</button>';
+        saveScore(score);
+        displayRank();
+    }
+
+    function saveScore(newScore) {
+        let history = JSON.parse(localStorage.getItem('zootopiaRank')) || [];
+        history.push({ score: newScore, date: new Date().toLocaleDateString() });
+        history.sort((a, b) => b.score - a.score);
+        history = history.slice(0, 5); // 只留前五名
+        localStorage.setItem('zootopiaRank', JSON.stringify(history));
+    }
+
+    function displayRank() {
+        const history = JSON.parse(localStorage.getItem('zootopiaRank')) || [];
+        const listDiv = document.getElementById('rank-list');
+        listDiv.innerHTML = history.map((item, index) => 
+            `<div class="rank-item"><span>No.${index+1}</span> <span>${item.score} 條</span> <span>${item.date}</span></div>`
+        ).join('') || '<div style="text-align:center">尚無紀錄</div>';
+    }
+
+    async function init() {
+        displayRank();
+        await Promise.all([
+            loadCharByName('Judy Hopps', 'judy-box', 'Judy'),
+            loadCharByName('Nick Wilde', 'nick-box', 'Nick'),
+            loadCharByName('Chief Bogo', 'bogo-box', 'Bogo'),
+            loadCharByName('Flash', 'flash-box', 'Flash')
+        ]);
+        document.getElementById('speech-bubble').innerText = "警局連線成功！";
+        generateGame();
+    }
+
+    init();
+</script>
+</body>
+</html>
